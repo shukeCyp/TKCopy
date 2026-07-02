@@ -1,0 +1,15 @@
+{
+  "name": "tkcopy-backend",
+  "version": "0.1.0",
+  "description": "TKCopy Backend",
+  "main": "main.py",
+  "scripts": {
+    "start": "python backend/main.py",
+    "dev": "python backend/main.py"
+  },
+  "dependencies": {
+    "whispercpp": "^0.0.13",
+    "pycapcut": "^0.4.0",
+    "pillow": "^11.0.0"
+  }
+}

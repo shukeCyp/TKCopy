@@ -1,0 +1,7 @@
+# TKCopy Backend
+whispercpp>=0.0.13
+pycapcut>=0.4.0
+Pillow>=11.0.0
+pywebview>=5.0
+
+# ponytail: 最小依赖集，ffmpeg/ffprobe需系统安装

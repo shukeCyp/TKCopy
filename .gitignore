@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.DS_Store
+
+# 项目数据
+.data/
+output/
+.superpowers/
+model/
+*.mp3
+*.m4a
+*.srt
+
+# 前端
+node_modules/
+dist/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
