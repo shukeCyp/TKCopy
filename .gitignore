@@ -13,7 +13,6 @@ ENV/
 .data/
 output/
 .superpowers/
-model/
 *.mp3
 *.m4a
 *.srt
