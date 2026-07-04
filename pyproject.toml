@@ -8,10 +8,10 @@ dependencies = [
     "numpy>=1.26",
     "pyannote-audio>=4.0.5",
     "whispercpp>=0.0.13",
-    "pycapcut>=0.0.3",
     "pillow>=11.0.0",
     "pywebview>=5.0",
     "scipy>=1.15",
+    "pyjianyingdraft>=0.2.7",
 ]
 
 [build-system]

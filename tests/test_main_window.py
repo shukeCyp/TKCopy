@@ -117,7 +117,12 @@ class MainWindowTests(TestCase):
             },
         )
 
-        self.assertEqual(app_main.DEFAULT_SETTINGS["tts_provider"], "minimax")
+        self.assertEqual(app_main.DEFAULT_SETTINGS["tts_provider"], "voxcpm")
+        self.assertEqual(
+            app_main.DEFAULT_SETTINGS["voxcpm"]["base_url"],
+            "https://swc0syb3hwdavikr-8808.container.x-gpu.com/",
+        )
+        self.assertEqual(app_main.DEFAULT_SETTINGS["voxcpm"]["api_type"], "gradio")
         self.assertEqual(merged["voxcpm"]["base_url"], "https://tts.example.com")
         self.assertEqual(merged["voxcpm"]["api_type"], "gradio")
         self.assertEqual(merged["voxcpm"]["voice"], "Natasha")
@@ -132,3 +137,39 @@ class MainWindowTests(TestCase):
 
         self.assertIn("fast-paced English short-form TV/movie recap style", style)
         self.assertIn("Most sentences should be 6-12 words", style)
+
+    def test_default_rewrite_style_library_has_named_default_card(self):
+        styles = app_main.DEFAULT_SETTINGS["rewrite_styles"]
+
+        self.assertEqual(styles[0]["id"], "default")
+        self.assertEqual(styles[0]["name"], "默认")
+        self.assertEqual(styles[0]["prompt"], app_main.DEFAULT_SETTINGS["rewrite_style"])
+
+    def test_legacy_rewrite_style_is_migrated_into_style_library(self):
+        merged = app_main.merge_settings(
+            app_main.DEFAULT_SETTINGS,
+            {"rewrite_style": "Legacy custom style"},
+        )
+
+        self.assertEqual(merged["rewrite_styles"][0]["id"], "default")
+        self.assertEqual(merged["rewrite_styles"][0]["name"], "默认")
+        self.assertEqual(merged["rewrite_styles"][0]["prompt"], "Legacy custom style")
+        self.assertEqual(merged["selected_rewrite_style_id"], "default")
+
+    def test_default_settings_include_jianying_draft_folder(self):
+        self.assertEqual(
+            app_main.DEFAULT_SETTINGS["jianying"]["draft_folder"],
+            "/Users/chaiyapeng/Downloads/草稿/JianyingPro Drafts",
+        )
+
+    def test_api_select_directory_uses_folder_dialog(self):
+        api = app_main.Api()
+
+        with patch.object(app_main.webview, "windows") as windows:
+            windows.__bool__.return_value = True
+            windows.__getitem__.return_value.create_file_dialog.return_value = ["/tmp/output"]
+
+            result = api.select_directory()
+
+        self.assertEqual(result, {"path": "/tmp/output"})
+        windows.__getitem__.return_value.create_file_dialog.assert_called_once_with(app_main.webview.FOLDER_DIALOG)

@@ -106,7 +106,7 @@ class JianyingExportTests(unittest.TestCase):
         ):
             self.assertEqual(get_video_info("source.mkv"), (1920, 1080, 3485.653))
 
-    def test_create_video_material_uses_ffprobe_values_without_pycapcut_media_parse(self):
+    def test_create_video_material_uses_ffprobe_values_without_library_media_parse(self):
         class FakeCc:
             class CropSettings:
                 pass
@@ -254,6 +254,73 @@ class JianyingExportTests(unittest.TestCase):
 
             self.assertEqual(segment["target_timerange"], {"start": 0, "duration": 1_000_000})
             self.assertEqual(segment["source_timerange"], {"start": 2_000_000, "duration": 1_000_000})
+
+    def test_create_clip_draft_writes_jianying_project_sidecar_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            srt_path = tmp_path / "subtitles.srt"
+            srt_path.write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nhello\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch(
+                    "tkcopy.utils.jianying_export.get_video_info",
+                    side_effect=[(1080, 1920, 1.0), (1920, 1080, 10.0)],
+                ),
+                patch(
+                    "tkcopy.utils.jianying_export.prepare_jianying_video_source",
+                    return_value=tmp_path / "source.mp4",
+                ),
+            ):
+                draft_path = create_jianying_clip_draft(
+                    tmp_path / "viral.mp4",
+                    tmp_path / "source.mp4",
+                    [{"viral_frame": 1, "source_frame": 3, "distance": 1}],
+                    srt_path,
+                    draft_name="unit-draft",
+                    draft_folder=tmp_path,
+                )
+
+            self.assertTrue((draft_path / "Timelines" / "project.json").exists())
+            self.assertTrue((draft_path / "timeline_layout.json").exists())
+            self.assertTrue((draft_path / "common_attachment" / "attachment_id_mapping.json").exists())
+            self.assertTrue((draft_path / "draft_virtual_store.json").exists())
+            content = json.loads((draft_path / "draft_content.json").read_text(encoding="utf-8"))
+            timeline_dir = draft_path / "Timelines" / content["id"]
+            self.assertTrue((timeline_dir / "draft_content.json").exists())
+            self.assertTrue((timeline_dir / "attachment_pc_common.json").exists())
+            self.assertTrue((timeline_dir / "attachment_editing.json").exists())
+            self.assertTrue((timeline_dir / "common_attachment" / "attachment_id_mapping.json").exists())
+            project = json.loads((draft_path / "Timelines" / "project.json").read_text(encoding="utf-8"))
+            layout = json.loads((draft_path / "timeline_layout.json").read_text(encoding="utf-8"))
+            id_mapping = json.loads(
+                (draft_path / "common_attachment" / "attachment_id_mapping.json").read_text(encoding="utf-8")
+            )
+            timeline_content = json.loads((timeline_dir / "draft_content.json").read_text(encoding="utf-8"))
+            virtual_store = json.loads((draft_path / "draft_virtual_store.json").read_text(encoding="utf-8"))
+
+            self.assertTrue((draft_path / "performance_opt_info.json").exists())
+            self.assertTrue((draft_path / "attachment_pc_common.json").exists())
+            self.assertTrue((draft_path / "common_attachment" / "coperate_create.json").exists())
+            self.assertTrue((draft_path / "common_attachment" / "attachment_script_video.json").exists())
+            self.assertTrue((draft_path / "common_attachment" / "attachment_pc_timeline.json").exists())
+            self.assertTrue((draft_path / "draft_agency_config.json").exists())
+            self.assertTrue((draft_path / "draft_biz_config.json").exists())
+            self.assertEqual(project["main_timeline_id"], content["id"])
+            self.assertEqual(layout["activeTimeline"], content["id"])
+            self.assertEqual(timeline_content["id"], content["id"])
+            mapped_uuids = {item["uuid"] for item in id_mapping["id_mapping"]["mapping"]}
+            video_material_id = content["materials"]["videos"][0]["id"]
+            self.assertIn(video_material_id, mapped_uuids)
+            virtual_store_ids = {
+                item["child_id"]
+                for group in virtual_store["draft_virtual_store"]
+                if group["type"] == 1
+                for item in group["value"]
+            }
+            self.assertIn(video_material_id, virtual_store_ids)
 
     def test_plan_voiceover_segments_uses_original_tts_srt_anchors(self):
         planned = plan_voiceover_segments(

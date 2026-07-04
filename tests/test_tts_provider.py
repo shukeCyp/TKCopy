@@ -222,6 +222,62 @@ class TTSProviderTests(unittest.TestCase):
             "http://127.0.0.1:8808/gradio_api/call/generate",
         ])
 
+    def test_voxcpm_provider_falls_back_to_legacy_gradio_protocol_when_v2_returns_500(self):
+        class Response:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self.body
+
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            url = request.full_url if hasattr(request, "full_url") else request
+            calls.append(url)
+            if url == "https://tts.example.com/gradio_api/call/v2/generate":
+                raise HTTPError(url, 500, "Internal Server Error", {}, None)
+            if url == "https://tts.example.com/gradio_api/call/generate":
+                payload = json.loads(request.data.decode("utf-8"))
+                self.assertEqual(payload["data"][0], "hello remote")
+                return Response(json.dumps({"event_id": "evt-500"}).encode("utf-8"))
+            if url == "https://tts.example.com/gradio_api/call/generate/evt-500":
+                body = (
+                    "event: complete\n"
+                    'data: [{"path": "/tmp/generated.wav", "url": "/gradio_api/file=/tmp/generated.wav"}, 42]\n\n'
+                )
+                return Response(body.encode("utf-8"))
+            if url == "https://tts.example.com/gradio_api/file=/tmp/generated.wav":
+                return Response(b"wav-bytes")
+            raise AssertionError(f"unexpected url: {url}")
+
+        with tempfile.TemporaryDirectory() as tmp, patch("tkcopy.utils.tts_provider.urlopen", side_effect=fake_urlopen):
+            output = Path(tmp) / "voice.wav"
+            provider = VoxCPMTTSProvider(
+                base_url="https://tts.example.com",
+                api_type="gradio",
+                voice="Natasha",
+                voice_refs={},
+                audio_format="wav",
+                timeout=30,
+            )
+
+            result = provider.synthesize("hello remote", output)
+            output_bytes = output.read_bytes()
+
+        self.assertEqual(result, output)
+        self.assertEqual(output_bytes, b"wav-bytes")
+        self.assertEqual(calls[:2], [
+            "https://tts.example.com/gradio_api/call/v2/generate",
+            "https://tts.example.com/gradio_api/call/generate",
+        ])
+
     def test_synthesize_narration_audio_keeps_beats_near_source_anchors(self):
         class FakeProvider:
             name = "fake"

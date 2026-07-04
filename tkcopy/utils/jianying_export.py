@@ -3,6 +3,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ def seconds_to_microseconds(seconds: float) -> int:
 
 
 def seconds_timerange(cc, start_seconds: float, duration_seconds: float):
-    """Create a pycapcut Timerange from seconds."""
+    """Create a Jianying Timerange from seconds."""
     return cc.Timerange(
         seconds_to_microseconds(start_seconds),
         seconds_to_microseconds(duration_seconds),
@@ -27,7 +28,7 @@ def seconds_timerange(cc, start_seconds: float, duration_seconds: float):
 
 
 def microseconds_timerange(cc, start_microseconds: int, duration_microseconds: int):
-    """Create a pycapcut Timerange from already-normalized microseconds."""
+    """Create a Jianying Timerange from already-normalized microseconds."""
     return cc.Timerange(int(start_microseconds), int(duration_microseconds))
 
 
@@ -76,7 +77,7 @@ def get_media_duration(media_path: str | Path) -> float:
 
 
 def create_video_material(cc, path: str | Path, width: int, height: int, duration: float):
-    """Create a pycapcut VideoMaterial from ffprobe data, avoiding MKV parser duration bugs."""
+    """Create a Jianying VideoMaterial from ffprobe data, avoiding MKV parser duration bugs."""
     material = object.__new__(cc.VideoMaterial)
     material.material_name = Path(path).name
     material.material_id = uuid.uuid4().hex
@@ -91,13 +92,402 @@ def create_video_material(cc, path: str | Path, width: int, height: int, duratio
 
 
 def create_audio_material(cc, path: str | Path, duration: float):
-    """Create a pycapcut AudioMaterial from ffprobe duration."""
+    """Create a Jianying AudioMaterial from ffprobe duration."""
     material = object.__new__(cc.AudioMaterial)
     material.material_name = Path(path).name
     material.material_id = uuid.uuid4().hex
     material.path = str(Path(path).expanduser().resolve())
     material.duration = int(round(float(duration) * MICROSECONDS_PER_SECOND))
     return material
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _unique_ids_in_order(values: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
+
+
+def _collect_recursive_ids(value: Any) -> list[str]:
+    ids: list[str] = []
+    if isinstance(value, dict):
+        item_id = value.get("id")
+        if isinstance(item_id, str) and item_id:
+            ids.append(item_id)
+        for child in value.values():
+            ids.extend(_collect_recursive_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            ids.extend(_collect_recursive_ids(child))
+    return _unique_ids_in_order(ids)
+
+
+def _collect_material_ids(content: dict[str, Any]) -> list[str]:
+    material_ids = []
+    materials = content.get("materials", {})
+    if not isinstance(materials, dict):
+        return material_ids
+    for items in materials.values():
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]:
+                material_ids.append(item["id"])
+    return _unique_ids_in_order(material_ids)
+
+
+def _attachment_id_mapping_payload(content: dict[str, Any]) -> dict[str, Any]:
+    ids = _collect_recursive_ids(content)
+    return {
+        "id_mapping": {
+            "mapping": [
+                {
+                    "short_id": str(1000 + index),
+                    "uuid": item_id,
+                }
+                for index, item_id in enumerate(ids)
+            ],
+            "next_index": 1000 + len(ids),
+            "version": "1.0.0",
+        }
+    }
+
+
+def _draft_virtual_store_payload(content: dict[str, Any]) -> dict[str, Any]:
+    material_ids = _collect_material_ids(content)
+    return {
+        "draft_materials": [],
+        "draft_virtual_store": [
+            {
+                "type": 0,
+                "value": [
+                    {
+                        "creation_time": 0,
+                        "display_name": "",
+                        "filter_type": 0,
+                        "id": "",
+                        "import_time": 0,
+                        "import_time_us": 0,
+                        "sort_sub_type": 0,
+                        "sort_type": 0,
+                        "subdraft_filter_type": 0,
+                    }
+                ],
+            },
+            {
+                "type": 1,
+                "value": [{"child_id": item_id, "parent_id": ""} for item_id in material_ids],
+            },
+            {
+                "type": 2,
+                "value": [],
+            },
+        ],
+    }
+
+
+def _attachment_pc_common_payload() -> dict[str, Any]:
+    report_info = {
+        "caption_id_list": [],
+        "commercial_material": "",
+        "material_source": "",
+        "method": "",
+        "page_from": "",
+        "style": "",
+        "task_id": "",
+        "text_style": "",
+        "tos_id": "",
+        "video_category": "",
+    }
+    return {
+        "ai_packaging_infos": [],
+        "ai_packaging_report_info": report_info,
+        "broll": {
+            "ai_packaging_infos": [],
+            "ai_packaging_report_info": report_info,
+        },
+        "commercial_music_category_ids": [],
+        "pc_feature_flag": 0,
+        "recognize_tasks": [],
+        "template_item_infos": [],
+        "unlock_template_ids": [],
+    }
+
+
+def _attachment_script_video_payload() -> dict[str, Any]:
+    return {
+        "script_video": {
+            "attachment_valid": False,
+            "language": "",
+            "overdub_recover": [],
+            "overdub_sentence_ids": [],
+            "parts": [],
+            "sync_subtitle": False,
+            "translate_segments": [],
+            "translate_type": "",
+            "version": "1.0.0",
+        }
+    }
+
+
+def _attachment_pc_timeline_payload() -> dict[str, Any]:
+    return {
+        "reference_lines_config": {
+            "horizontal_lines": [],
+            "is_lock": False,
+            "is_visible": False,
+            "vertical_lines": [],
+        },
+        "safe_area_type": 0,
+    }
+
+
+def _attachment_editing_payload() -> dict[str, Any]:
+    return {
+        "editing_draft": {
+            "ai_remove_filter_words": {
+                "enter_source": "",
+                "right_id": "",
+            },
+            "ai_shorts_info": {
+                "report_params": "",
+                "type": 0,
+            },
+            "cover_extra_info": {
+                "draft_id": "",
+                "position": 0,
+                "select_segment_id": "",
+                "select_segment_source_start": 0,
+                "select_segment_target_start": 0,
+                "type": 1,
+            },
+            "crop_info_extra": {
+                "crop_mirror_type": 0,
+                "crop_rotate": 0.0,
+                "crop_rotate_total": 0.0,
+            },
+            "digital_human_template_to_video_info": {
+                "has_upload_material": False,
+                "template_type": 0,
+            },
+            "draft_used_recommend_function": "",
+            "edit_type": 0,
+            "eye_correct_enabled_multi_face_time": 0,
+            "has_adjusted_render_layer": False,
+            "image_ai_chat_info": {
+                "before_chat_edit": False,
+                "draft_modify_time": 0,
+                "generate_type": "",
+                "inspiration_item_id": "",
+                "inspiration_item_name": "",
+                "keyword_content": "",
+                "keyword_id": "",
+                "keyword_name": "",
+                "keyword_type": "",
+                "message_id": "",
+                "model_name": "",
+                "need_restore": False,
+                "picture_id": "",
+                "prompt_content": "",
+                "prompt_from": "",
+                "sugs_info": [],
+            },
+            "is_open_expand_player": False,
+            "is_template_text_ai_generate": False,
+            "is_use_adjust": False,
+            "is_use_ai_expand": False,
+            "is_use_ai_image": False,
+            "is_use_ai_remove": False,
+            "is_use_ai_video": False,
+            "is_use_audio_separation": False,
+            "is_use_chroma_key": False,
+            "is_use_curve_speed": False,
+            "is_use_digital_human": False,
+            "is_use_edit_multi_camera": False,
+            "is_use_lip_sync": False,
+            "is_use_lock_object": False,
+            "is_use_loudness_unify": False,
+            "is_use_noise_reduction": False,
+            "is_use_one_click_beauty": False,
+            "is_use_one_click_ultra_hd": False,
+            "is_use_retouch_face": False,
+            "is_use_smart_adjust_color": False,
+            "is_use_smart_body_beautify": False,
+            "is_use_smart_motion": False,
+            "is_use_subtitle_recognition": False,
+            "is_use_text_to_audio": False,
+            "material_edit_session": {
+                "material_edit_info": [],
+                "session_id": "",
+                "session_time": 0,
+            },
+            "paste_segment_list": [],
+            "profile_entrance_type": "",
+            "publish_enter_from": "",
+            "publish_type": "",
+            "single_function_type": 0,
+            "text_convert_case_types": [],
+            "version": "1.0.0",
+            "video_recording_create_draft": "",
+        }
+    }
+
+
+def _ensure_draft_settings(draft_path: Path, create_us: int, update_us: int) -> None:
+    settings_path = draft_path / "draft_settings"
+    create_seconds = max(0, create_us // MICROSECONDS_PER_SECOND)
+    update_seconds = max(create_seconds, update_us // MICROSECONDS_PER_SECOND)
+    if settings_path.exists():
+        text = settings_path.read_text(encoding="utf-8")
+        if "cloud_last_modify_platform=" in text:
+            return
+        lines = text.splitlines()
+        if lines and lines[0].strip() == "[General]":
+            lines.insert(1, "cloud_last_modify_platform=mac")
+            settings_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
+    settings_path.write_text(
+        "\n".join(
+            [
+                "[General]",
+                "cloud_last_modify_platform=mac",
+                f"draft_create_time={create_seconds}",
+                f"draft_last_edit_time={update_seconds}",
+                "real_edit_keys=1",
+                "real_edit_seconds=0",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_jianying_project_sidecars(draft_path: str | Path) -> None:
+    """补齐新版剪映识别草稿需要的工程索引文件。"""
+    draft_path = Path(draft_path).expanduser().resolve()
+    content_path = draft_path / "draft_content.json"
+    content = _read_json_if_exists(content_path)
+    if not content:
+        raise FileNotFoundError(f"缺少草稿内容文件 / Missing draft content: {content_path}")
+
+    meta = _read_json_if_exists(draft_path / "draft_meta_info.json")
+    timeline_id = str(content.get("id") or meta.get("draft_id") or uuid.uuid4()).strip()
+    now_us = int(time.time() * MICROSECONDS_PER_SECOND)
+    create_us = int(meta.get("tm_draft_create") or content.get("create_time") or now_us)
+    update_us = int(meta.get("tm_draft_modified") or content.get("update_time") or create_us)
+    timeline_name = "时间线01"
+    timeline_dir = draft_path / "Timelines" / timeline_id
+
+    id_mapping = _attachment_id_mapping_payload(content)
+    attachment_pc_common = _attachment_pc_common_payload()
+    attachment_script_video = _attachment_script_video_payload()
+    attachment_pc_timeline = _attachment_pc_timeline_payload()
+
+    _write_json(draft_path / "draft_virtual_store.json", _draft_virtual_store_payload(content))
+    _write_json(
+        draft_path / "performance_opt_info.json",
+        {
+            "manual_cancle_precombine_segs": None,
+            "need_auto_precombine_segs": None,
+        },
+    )
+    _write_json(draft_path / "attachment_pc_common.json", attachment_pc_common)
+    _write_json(draft_path / "common_attachment" / "attachment_id_mapping.json", id_mapping)
+    _write_json(draft_path / "common_attachment" / "coperate_create.json", {"roomInfo": {"room_id": ""}})
+    _write_json(draft_path / "common_attachment" / "attachment_script_video.json", attachment_script_video)
+    _write_json(draft_path / "common_attachment" / "attachment_pc_timeline.json", attachment_pc_timeline)
+    _write_json(
+        draft_path / "draft_agency_config.json",
+        {
+            "is_auto_agency_enabled": False,
+            "is_auto_agency_popup": False,
+            "is_single_agency_mode": False,
+            "marterials": None,
+            "use_converter": False,
+            "video_resolution": 720,
+        },
+    )
+    (draft_path / "draft_biz_config.json").write_text("", encoding="utf-8")
+    _ensure_draft_settings(draft_path, create_us, update_us)
+
+    _write_json(
+        draft_path / "Timelines" / "project.json",
+        {
+            "config": {
+                "color_space": 0,
+                "render_index_track_mode_on": False,
+                "use_float_render": False,
+            },
+            "create_time": create_us,
+            "id": timeline_id,
+            "main_timeline_id": timeline_id,
+            "timelines": [
+                {
+                    "create_time": create_us,
+                    "id": timeline_id,
+                    "is_marked_delete": False,
+                    "name": timeline_name,
+                    "update_time": update_us,
+                }
+            ],
+            "update_time": update_us,
+            "version": 0,
+        },
+    )
+    _write_json(
+        draft_path / "timeline_layout.json",
+        {
+            "activeTimeline": timeline_id,
+            "dockItems": [
+                {
+                    "dockIndex": 0,
+                    "ratio": 1,
+                    "timelineIds": [timeline_id],
+                    "timelineNames": [timeline_name],
+                }
+            ],
+            "layoutOrientation": 1,
+        },
+    )
+
+    timeline_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(content_path, timeline_dir / "draft_content.json")
+    shutil.copy2(content_path, draft_path / "draft_content.json.bak")
+    shutil.copy2(content_path, draft_path / "template-2.tmp")
+    shutil.copy2(content_path, timeline_dir / "draft_content.json.bak")
+    shutil.copy2(content_path, timeline_dir / "template-2.tmp")
+    _write_json(timeline_dir / "attachment_pc_common.json", attachment_pc_common)
+    _write_json(timeline_dir / "attachment_editing.json", _attachment_editing_payload())
+    _write_json(timeline_dir / "common_attachment" / "attachment_action_scene.json", {"action_scene": {"removed_segments": [], "segment_infos": []}})
+    _write_json(timeline_dir / "common_attachment" / "attachment_id_mapping.json", id_mapping)
+    _write_json(timeline_dir / "common_attachment" / "attachment_script_video.json", attachment_script_video)
+    _write_json(timeline_dir / "common_attachment" / "attachment_pc_timeline.json", attachment_pc_timeline)
+    _write_json(timeline_dir / "common_attachment" / "attachment_plugin_draft.json", {"plugin_draft": {"plugin_segments": [], "version": "1.0.0"}})
+    for empty_dir in ("adjust_mask", "matting", "qr_upload", "smart_crop", "subdraft"):
+        (draft_path / empty_dir).mkdir(exist_ok=True)
+
+    print_log(
+        "补齐剪映工程索引",
+        "Wrote Jianying project sidecars",
+        draft=draft_path,
+        timeline_id=timeline_id,
+        ids=len(id_mapping["id_mapping"]["mapping"]),
+        materials=len(_collect_material_ids(content)),
+    )
 
 
 def prepare_jianying_video_source(source_video: str | Path, draft_path: str | Path) -> Path:
@@ -395,7 +785,7 @@ def create_jianying_clip_draft(
     normal_source_volume: float = 1.0,
 ) -> Path:
     """创建剪映草稿：排列匹配视频片段，并可加入分段配音。"""
-    import pycapcut as cc
+    import pyJianYingDraft as cc
 
     viral_video = Path(viral_video).expanduser().resolve()
     source_video = Path(source_video).expanduser().resolve()
@@ -577,6 +967,7 @@ def create_jianying_clip_draft(
     else:
         print_log("跳过 SRT 字幕导入", "Skipped SRT subtitle import")
     script.save()
+    write_jianying_project_sidecars(draft_path)
 
     print_log("剪映片段草稿创建完成", "Jianying clip draft created", draft=draft_path)
     return draft_path
@@ -588,7 +979,7 @@ def create_jianying_draft(
     draft_folder: str | Path = DEFAULT_DRAFT_FOLDER,
 ) -> Path:
     """创建剪映草稿"""
-    import pycapcut as cc
+    import pyJianYingDraft as cc
 
     final_video = Path(final_video).resolve()
     draft_folder = Path(draft_folder).expanduser()
@@ -607,6 +998,7 @@ def create_jianying_draft(
     script.add_segment(cc.VideoSegment(str(final_video), seconds_timerange(cc, 0, duration)))
     script.save()
     draft_path = draft_folder / draft_safe_name
+    write_jianying_project_sidecars(draft_path)
     print_log("剪映草稿创建完成", "Jianying draft created", draft=draft_path)
     return draft_path
 
@@ -618,7 +1010,7 @@ def create_jianying_draft_with_subtitles(
     draft_folder: str | Path = DEFAULT_DRAFT_FOLDER,
 ) -> Path:
     """创建带字幕的剪映草稿"""
-    import pycapcut as cc
+    import pyJianYingDraft as cc
 
     video_path = Path(video_path).resolve()
     draft_folder = Path(draft_folder).expanduser()
@@ -664,5 +1056,6 @@ def create_jianying_draft_with_subtitles(
 
     script.save()
     draft_path = draft_folder / draft_safe_name
+    write_jianying_project_sidecars(draft_path)
     print_log("带字幕剪映草稿创建完成", "Jianying draft with subtitles created", draft=draft_path)
     return draft_path

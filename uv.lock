@@ -1394,20 +1394,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pycapcut"
-version = "0.0.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "imageio" },
-    { name = "pymediainfo" },
-    { name = "uiautomation", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/e7/73c38b455f228f341ee48f87d0f716ccbf60314d4c3d1cf5526a84d3ce67/pycapcut-0.0.3.tar.gz", hash = "sha256:cfe9f46eded8e236aa4375c89a46fee8a485564977e4bb223444ce5ef2c62ee3", size = 336017, upload-time = "2025-08-14T10:19:40.819Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/e2/5724cabc37c68ea1acc2c900bda04a2a7056294fc07cc9582225e6a56cfc/pycapcut-0.0.3-py3-none-any.whl", hash = "sha256:d51428cd3309c98cd1142a43dc87b231bc1283ea4f3d9ec0f6191a230644e73d", size = 343817, upload-time = "2025-08-14T10:19:39.118Z" },
-]
-
-[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1423,6 +1409,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f", size = 4955991, upload-time = "2026-03-29T13:29:33.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
+]
+
+[[package]]
+name = "pyjianyingdraft"
+version = "0.2.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "imageio" },
+    { name = "pymediainfo" },
+    { name = "uiautomation", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/1b/9a18384d6afca9f24e38db75afc4a2648d9c3af0460fbd1bff0e367d71f4/pyjianyingdraft-0.2.7.tar.gz", hash = "sha256:f54571e634fad53b98fd1b6e52a2fd8e124b27c8a3f8f8f8e6c5baf495fbb5db", size = 319897, upload-time = "2026-06-25T15:41:20.486Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/03/3bc8655095451e5110af3975263203727de25bbea6f1027c499afae80d9a/pyjianyingdraft-0.2.7-py3-none-any.whl", hash = "sha256:756810bc2a55b601fe421854ba7d4fbd32e283889cdfc5799816b084bb3e649c", size = 328030, upload-time = "2026-06-25T15:41:18.976Z" },
 ]
 
 [[package]]
@@ -1838,7 +1838,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pyannote-audio" },
-    { name = "pycapcut" },
+    { name = "pyjianyingdraft" },
     { name = "pywebview" },
     { name = "scipy" },
     { name = "whispercpp" },
@@ -1850,7 +1850,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "pyannote-audio", specifier = ">=4.0.5" },
-    { name = "pycapcut", specifier = ">=0.0.3" },
+    { name = "pyjianyingdraft", specifier = ">=0.2.7" },
     { name = "pywebview", specifier = ">=5.0" },
     { name = "scipy", specifier = ">=1.15" },
     { name = "whispercpp", specifier = ">=0.0.13" },

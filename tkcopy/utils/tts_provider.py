@@ -143,7 +143,7 @@ class VoxCPMTTSProvider:
         try:
             response = self._post_json(f"{base_url}/gradio_api/call/v2/generate", payload)
         except RuntimeError as exc:
-            if "HTTP 405" not in str(exc) and "HTTP 422" not in str(exc):
+            if not _is_gradio_v2_fallback_error(exc):
                 raise
             print_log(
                 "VoxCPM Gradio v2 不可用，切换旧版协议",
@@ -291,6 +291,11 @@ class VoxCPMTTSProvider:
         output_path.write_bytes(audio_bytes)
         print_log("VoxCPM 配音完成", "VoxCPM audio generated", output=output_path, bytes=len(audio_bytes))
         return output_path
+
+
+def _is_gradio_v2_fallback_error(exc: RuntimeError) -> bool:
+    message = str(exc)
+    return any(code in message for code in ("HTTP 405", "HTTP 422", "HTTP 500"))
 
 
 def get_media_duration(media_path: str | Path) -> float:

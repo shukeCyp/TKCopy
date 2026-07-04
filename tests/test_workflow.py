@@ -35,6 +35,7 @@ class WorkflowTests(unittest.TestCase):
                 "voice_id": "voice",
                 "base_url": "https://api.minimax.chat",
             },
+            "jianying": {"draft_folder": "/drafts"},
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -129,6 +130,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(create_draft.call_args.kwargs["voice_segments"][0]["text"], "hi")
         self.assertFalse(create_draft.call_args.kwargs["import_subtitles"])
         self.assertFalse(create_draft.call_args.kwargs["trim_voice_silence"])
+        self.assertEqual(create_draft.call_args.kwargs["draft_folder"], "/drafts")
         self.assertNotIn("final_video", result)
         self.assertEqual(result["jianying_draft"], str(output_dir / "draft"))
         self.assertEqual(result["copy_text"], str(output_dir / "文案.txt"))
