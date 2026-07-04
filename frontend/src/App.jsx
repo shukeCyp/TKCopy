@@ -1,4 +1,10 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { AppShell } from './components/layout/AppShell.jsx'
+import { SingleTaskView } from './views/SingleTaskView.jsx'
+import { BatchView } from './views/BatchView.jsx'
+import { SettingsView } from './views/SettingsView.jsx'
+import { StyleLibraryView } from './views/StyleLibraryView.jsx'
+import { LogsView } from './views/LogsView.jsx'
 
 const DEFAULT_RECAP_STYLE_PROMPT = `Write in fast-paced English short-form TV/movie recap style.
 
@@ -35,11 +41,30 @@ Do not translate line by line from the source subtitles.
 Do not copy the sample wording.
 Extract only the pacing, sentence shape, transition style, and narrative structure.`
 
+const DEFAULT_STYLE_ID = 'default'
+const DEFAULT_REWRITE_STYLES = [
+  {
+    id: DEFAULT_STYLE_ID,
+    name: '默认',
+    prompt: DEFAULT_RECAP_STYLE_PROMPT,
+  },
+]
+
 const DEFAULT_SETTINGS = {
   whisper_model: 'base',
   vad_model: '',
   vad: { threshold: 0.25, min_speech_ms: 10, min_silence_ms: 50 },
   demucs_model: 'htdemucs',
+  frame_match: {
+    engine: 'vmf',
+    vmf_bin: '/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf',
+    fps: 3.0,
+    model: 'dinov2_vits14',
+    device: 'cpu',
+    batch_size: 64,
+    inflight: 1,
+    padding_seconds: 90.0,
+  },
   speaker: {
     enabled: true,
     similarity_threshold: 0.82,
@@ -55,8 +80,10 @@ const DEFAULT_SETTINGS = {
     timing_offset_ms: 820,
   },
   rewrite_style: DEFAULT_RECAP_STYLE_PROMPT,
+  rewrite_styles: DEFAULT_REWRITE_STYLES,
+  selected_rewrite_style_id: DEFAULT_STYLE_ID,
   llm: { api_key: '', model: 'gemini-3.5-flash', base_url: 'https://yunwu.ai' },
-  tts_provider: 'minimax',
+  tts_provider: 'voxcpm',
   minimax: {
     api_key: '',
     group_id: '',
@@ -65,12 +92,12 @@ const DEFAULT_SETTINGS = {
     speed: 1.2,
   },
   voxcpm: {
-    base_url: '',
-    api_type: 'synthesize',
+    base_url: 'https://swc0syb3hwdavikr-8808.container.x-gpu.com/',
+    api_type: 'gradio',
     voice: 'Natasha',
     voice_refs: {
-      Natasha: '',
-      Alex: '',
+      Natasha: '/Users/chaiyapeng/Documents/VoxCPM/reference_audio/Natasha.mp3',
+      Alex: '/Users/chaiyapeng/Documents/VoxCPM/reference_audio/Alex.mp3',
     },
     control: '',
     seed: 42,
@@ -81,16 +108,38 @@ const DEFAULT_SETTINGS = {
     audio_format: 'wav',
     timeout: 900,
   },
+  jianying: {
+    draft_folder: '/Users/chaiyapeng/Downloads/草稿/JianyingPro Drafts',
+  },
 }
 
 const fallbackApi = {
   get_settings: async () => DEFAULT_SETTINGS,
   update_settings: async () => ({ ok: true }),
   run_workflow: async () => ({ ok: true, message: 'mock: workflow started' }),
+  run_batch_workflow: async () => ({ ok: true, message: 'mock: batch workflow started' }),
+  scan_batch_cases: async () => ({ ok: true, cases: [] }),
   select_file: async () => ({ path: '/mock/path/video.mp4' }),
+  select_directory: async () => ({ path: '/mock/path' }),
 }
 
-const requiredApiMethods = ['get_settings', 'update_settings', 'run_workflow', 'select_file']
+const requiredApiMethods = [
+  'get_settings',
+  'update_settings',
+  'run_workflow',
+  'run_batch_workflow',
+  'scan_batch_cases',
+  'select_file',
+  'select_directory',
+]
+
+const workflowSteps = [
+  { key: 'TTS分离', label: 'TTS分离' },
+  { key: '解说规划', label: '解说规划' },
+  { key: '镜头匹配', label: 'VMF粗匹配 + 逐帧精匹配' },
+  { key: '音频生成', label: 'VoxCPM音频生成' },
+  { key: '导出剪映', label: '导出剪映草稿' },
+]
 
 function getApi() {
   const pywebviewApi = window.pywebview?.api
@@ -102,13 +151,61 @@ function getApi() {
     : fallbackApi
 }
 
-const steps = ['TTS分离', '解说规划', '镜头匹配', '音频生成', '导出剪映']
+function normalizeRewriteStyles(styles, fallbackPrompt = DEFAULT_RECAP_STYLE_PROMPT) {
+  const sourceStyles = Array.isArray(styles) ? styles : []
+  const normalized = sourceStyles.map((style, index) => {
+    const id = String(style?.id || (index === 0 ? DEFAULT_STYLE_ID : `style_${index + 1}`)).trim()
+    const name = String(style?.name || (id === DEFAULT_STYLE_ID ? '默认' : `风格 ${index + 1}`)).trim()
+    return {
+      id,
+      name: name || (id === DEFAULT_STYLE_ID ? '默认' : `风格 ${index + 1}`),
+      prompt: String(style?.prompt || ''),
+    }
+  })
+
+  if (normalized.length === 0) {
+    return [{ ...DEFAULT_REWRITE_STYLES[0], prompt: fallbackPrompt || DEFAULT_RECAP_STYLE_PROMPT }]
+  }
+
+  if (!normalized.some((style) => style.id === DEFAULT_STYLE_ID)) {
+    normalized.unshift({
+      ...DEFAULT_REWRITE_STYLES[0],
+      prompt: fallbackPrompt || DEFAULT_RECAP_STYLE_PROMPT,
+    })
+  }
+
+  return normalized
+}
+
+function getSelectedRewriteStyle(styles, selectedId) {
+  const normalized = normalizeRewriteStyles(styles)
+  return normalized.find((style) => style.id === selectedId) || normalized[0] || DEFAULT_REWRITE_STYLES[0]
+}
+
+function createRewriteStyleId(styles) {
+  const existingIds = new Set((styles || []).map((style) => style.id))
+  let index = (styles || []).length + 1
+  let id = `style_${index}`
+  while (existingIds.has(id)) {
+    index += 1
+    id = `style_${index}`
+  }
+  return id
+}
 
 function mergeSettings(settings) {
+  const legacyRewriteStyle = settings?.rewrite_style || DEFAULT_SETTINGS.rewrite_style
+  const rewriteStyles = normalizeRewriteStyles(settings?.rewrite_styles, legacyRewriteStyle)
+  const selectedRewriteStyleId = rewriteStyles.some((style) => style.id === settings?.selected_rewrite_style_id)
+    ? settings.selected_rewrite_style_id
+    : rewriteStyles[0].id
+  const activeStyle = getSelectedRewriteStyle(rewriteStyles, selectedRewriteStyleId)
+
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
     vad: { ...DEFAULT_SETTINGS.vad, ...(settings?.vad || {}) },
+    frame_match: { ...DEFAULT_SETTINGS.frame_match, ...(settings?.frame_match || {}) },
     speaker: { ...DEFAULT_SETTINGS.speaker, ...(settings?.speaker || {}) },
     asr: { ...DEFAULT_SETTINGS.asr, ...(settings?.asr || {}) },
     llm: { ...DEFAULT_SETTINGS.llm, ...(settings?.llm || {}) },
@@ -121,40 +218,93 @@ function mergeSettings(settings) {
         ...(settings?.voxcpm?.voice_refs || {}),
       },
     },
+    jianying: { ...DEFAULT_SETTINGS.jianying, ...(settings?.jianying || {}) },
+    rewrite_style: activeStyle.prompt || legacyRewriteStyle,
+    rewrite_styles: rewriteStyles,
+    selected_rewrite_style_id: selectedRewriteStyleId,
   }
 }
 
+function logLine(title, detail = '') {
+  return {
+    id: `${Date.now()}-${Math.random()}`,
+    time: new Date().toLocaleTimeString(),
+    title,
+    detail,
+  }
+}
+
+function progressText(detail) {
+  if (!detail) return ''
+  if (typeof detail === 'string') return detail
+  if (detail.event === 'case_started') return `批量 ${detail.index}/${detail.total}: ${detail.case_id} 开始`
+  if (detail.event === 'case_step') return `批量 ${detail.index}/${detail.total}: ${detail.case_id} - ${detail.step}`
+  if (detail.event === 'case_completed') return `批量 ${detail.index}/${detail.total}: ${detail.case_id} 完成`
+  if (detail.event === 'case_failed') return `批量 ${detail.index}/${detail.total}: ${detail.case_id} 失败`
+  if (detail.event === 'batch_finished') return '批量完成'
+  return detail.step || detail.event || JSON.stringify(detail)
+}
+
 export default function App() {
-  const [activeView, setActiveView] = useState('task')
+  const [activeView, setActiveView] = useState('single')
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [viralVideo, setViralVideo] = useState('')
   const [sourceVideo, setSourceVideo] = useState('')
   const [outputDir, setOutputDir] = useState('output')
   const [rewriteStyle, setRewriteStyle] = useState('')
+  const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID)
+  const [batchRootDir, setBatchRootDir] = useState('/Users/chaiyapeng/Downloads/对标')
+  const [batchOutputDir, setBatchOutputDir] = useState('output')
+  const [voiceSplitCount, setVoiceSplitCount] = useState(5)
+  const [batchCases, setBatchCases] = useState([])
   const [progress, setProgress] = useState('')
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [settingsStatus, setSettingsStatus] = useState('')
+  const [logs, setLogs] = useState([])
+  const [lastResult, setLastResult] = useState(null)
+
+  const appendLog = (title, detail = '') => {
+    setLogs((current) => [logLine(title, detail), ...current].slice(0, 200))
+  }
 
   useEffect(() => {
     const loadSettings = () => {
       getApi().get_settings()
-      .then((loadedSettings) => {
-        const nextSettings = mergeSettings(loadedSettings)
-        setSettings(nextSettings)
-        setRewriteStyle(nextSettings.rewrite_style || '')
-      })
-      .catch((e) => setError('加载配置失败: ' + e.message))
+        .then((loadedSettings) => {
+          const nextSettings = mergeSettings(loadedSettings)
+          const activeStyle = getSelectedRewriteStyle(
+            nextSettings.rewrite_styles,
+            nextSettings.selected_rewrite_style_id,
+          )
+          setSettings(nextSettings)
+          setSelectedStyleId(activeStyle.id)
+          setRewriteStyle(activeStyle.prompt || nextSettings.rewrite_style || '')
+        })
+        .catch((e) => setError('加载配置失败: ' + e.message))
     }
 
-    const onProgress = (e) => setProgress(e.detail)
-    const onComplete = () => {
+    const onProgress = (e) => {
+      const text = progressText(e.detail)
+      setProgress(text)
+      appendLog('步骤', text)
+    }
+    const onBatchProgress = (e) => {
+      const text = progressText(e.detail)
+      setProgress(text)
+      appendLog('批量', text)
+    }
+    const onComplete = (e) => {
       setRunning(false)
       setProgress('完成')
+      setLastResult(e.detail || null)
+      appendLog('完成', resultSummary(e.detail))
     }
     const onError = (e) => {
+      const message = typeof e.detail === 'string' ? e.detail : JSON.stringify(e.detail)
       setRunning(false)
-      setError(e.detail)
+      setError(message)
+      appendLog('错误', message)
     }
 
     const onPywebviewReady = () => {
@@ -163,12 +313,14 @@ export default function App() {
 
     loadSettings()
     window.addEventListener('progress', onProgress)
+    window.addEventListener('batch_progress', onBatchProgress)
     window.addEventListener('complete', onComplete)
     window.addEventListener('error', onError)
     window.addEventListener('pywebviewready', onPywebviewReady)
 
     return () => {
       window.removeEventListener('progress', onProgress)
+      window.removeEventListener('batch_progress', onBatchProgress)
       window.removeEventListener('complete', onComplete)
       window.removeEventListener('error', onError)
       window.removeEventListener('pywebviewready', onPywebviewReady)
@@ -184,6 +336,15 @@ export default function App() {
     }
   }
 
+  const selectDirectory = async (setter) => {
+    try {
+      const result = await getApi().select_directory()
+      if (result.path) setter(result.path)
+    } catch (e) {
+      setError('选择目录失败: ' + e.message)
+    }
+  }
+
   const runWorkflow = async () => {
     if (!viralVideo || !sourceVideo) {
       setError('请选择爆款视频和源电影')
@@ -193,6 +354,7 @@ export default function App() {
     setError('')
     setRunning(true)
     setProgress('启动...')
+    appendLog('单集任务', `${viralVideo} -> ${sourceVideo}`)
 
     try {
       await getApi().run_workflow({
@@ -200,10 +362,59 @@ export default function App() {
         source_video: sourceVideo,
         output_dir: outputDir,
         rewrite_style: rewriteStyle,
+        target_language: 'English',
       })
     } catch (e) {
       setRunning(false)
       setError('启动失败: ' + e.message)
+    }
+  }
+
+  const scanBatch = async () => {
+    if (!batchRootDir) {
+      setError('请选择批量目录')
+      return
+    }
+
+    setError('')
+    setProgress('扫描批量目录...')
+    appendLog('扫描批量目录', batchRootDir)
+    try {
+      const result = await getApi().scan_batch_cases({
+        root_dir: batchRootDir,
+        voice_split_count: voiceSplitCount,
+      })
+      setBatchCases(result.cases || [])
+      appendLog('扫描完成', `${result.cases?.length || 0} 个目录`)
+    } catch (e) {
+      setError('扫描失败: ' + e.message)
+      appendLog('扫描失败', e.message)
+    }
+  }
+
+  const runBatchWorkflow = async () => {
+    const enabledCases = batchCases.filter((item) => item.enabled)
+    if (!batchRootDir || enabledCases.length === 0) {
+      setError('请先扫描并保留至少一个可执行案例')
+      return
+    }
+
+    setError('')
+    setRunning(true)
+    setProgress('批量启动...')
+    appendLog('批量任务', `${enabledCases.length} 个案例`)
+    try {
+      await getApi().run_batch_workflow({
+        root_dir: batchRootDir,
+        output_dir: batchOutputDir,
+        rewrite_style: rewriteStyle,
+        target_language: 'English',
+        voice_split_count: voiceSplitCount,
+        cases: enabledCases,
+      })
+    } catch (e) {
+      setRunning(false)
+      setError('批量启动失败: ' + e.message)
     }
   }
 
@@ -221,523 +432,193 @@ export default function App() {
     }))
   }
 
+  const selectRewriteStyle = (styleId) => {
+    const styles = normalizeRewriteStyles(settings.rewrite_styles, settings.rewrite_style)
+    const activeStyle = getSelectedRewriteStyle(styles, styleId)
+
+    setSelectedStyleId(activeStyle.id)
+    setRewriteStyle(activeStyle.prompt || '')
+    setSettings((current) => ({
+      ...current,
+      rewrite_style: activeStyle.prompt || '',
+      rewrite_styles: styles,
+      selected_rewrite_style_id: activeStyle.id,
+    }))
+  }
+
+  const updateCurrentRewriteStyle = (prompt) => {
+    setRewriteStyle(prompt)
+    setSettings((current) => {
+      const styles = normalizeRewriteStyles(current.rewrite_styles, prompt).map((style) => (
+        style.id === selectedStyleId ? { ...style, prompt } : style
+      ))
+      return {
+        ...current,
+        rewrite_style: prompt,
+        rewrite_styles: styles,
+        selected_rewrite_style_id: selectedStyleId,
+      }
+    })
+  }
+
   const saveSettings = async () => {
     setSettingsStatus('保存中...')
     setError('')
 
     try {
-      const normalized = mergeSettings(settings)
+      const currentStyles = normalizeRewriteStyles(settings.rewrite_styles, rewriteStyle).map((style) => (
+        style.id === selectedStyleId ? { ...style, prompt: rewriteStyle } : style
+      ))
+      const normalized = mergeSettings({
+        ...settings,
+        rewrite_style: rewriteStyle,
+        rewrite_styles: currentStyles,
+        selected_rewrite_style_id: selectedStyleId,
+        tts_provider: 'voxcpm',
+      })
       await getApi().update_settings('whisper_model', normalized.whisper_model)
       await getApi().update_settings('vad_model', normalized.vad_model)
       await getApi().update_settings('vad', normalized.vad)
       await getApi().update_settings('demucs_model', normalized.demucs_model)
+      await getApi().update_settings('frame_match', normalized.frame_match)
       await getApi().update_settings('speaker', normalized.speaker)
       await getApi().update_settings('asr', normalized.asr)
       await getApi().update_settings('rewrite_style', normalized.rewrite_style)
+      await getApi().update_settings('rewrite_styles', normalized.rewrite_styles)
+      await getApi().update_settings('selected_rewrite_style_id', normalized.selected_rewrite_style_id)
       await getApi().update_settings('llm', normalized.llm)
-      await getApi().update_settings('tts_provider', normalized.tts_provider)
-      await getApi().update_settings('minimax', normalized.minimax)
+      await getApi().update_settings('tts_provider', 'voxcpm')
       await getApi().update_settings('voxcpm', normalized.voxcpm)
+      await getApi().update_settings('jianying', normalized.jianying)
       setSettings(normalized)
+      setSelectedStyleId(normalized.selected_rewrite_style_id)
       setRewriteStyle(normalized.rewrite_style)
       setSettingsStatus('已保存')
+      appendLog('设置', '已保存')
     } catch (e) {
       setSettingsStatus('')
       setError('保存配置失败: ' + e.message)
     }
   }
 
+  const syncSettingsState = (nextSettings) => {
+    const normalized = mergeSettings(nextSettings)
+    setSettings(normalized)
+    setSelectedStyleId(normalized.selected_rewrite_style_id)
+    setRewriteStyle(normalized.rewrite_style)
+  }
+
+  const rewriteStyles = normalizeRewriteStyles(settings.rewrite_styles, rewriteStyle)
+  const activeSettings = {
+    ...settings,
+    rewrite_style: rewriteStyle,
+    rewrite_styles: rewriteStyles,
+    selected_rewrite_style_id: selectedStyleId,
+  }
+
   return (
-    <div className="app-shell">
-      <aside className="drawer">
-        <div className="brand">
-          <div className="brand-mark">TK</div>
-          <div>
-            <div className="brand-name">TKCopy</div>
-            <div className="brand-subtitle">复刻工作流</div>
-          </div>
-        </div>
+    <AppShell
+      activeView={activeView}
+      running={running}
+      progress={progress}
+      onNavigate={setActiveView}
+    >
+      {activeView === 'single' && (
+        <SingleTaskView
+          form={{
+            viral_video: viralVideo,
+            source_video: sourceVideo,
+            output_dir: outputDir,
+          }}
+          setForm={(nextForm) => {
+            setViralVideo(nextForm.viral_video)
+            setSourceVideo(nextForm.source_video)
+            setOutputDir(nextForm.output_dir)
+          }}
+          settings={activeSettings}
+          rewriteStyles={rewriteStyles}
+          setSettings={syncSettingsState}
+          running={running}
+          progress={progress}
+          error={error}
+          lastResult={lastResult}
+          onRewriteStyleChange={updateCurrentRewriteStyle}
+          onStyleSelect={selectRewriteStyle}
+          onPickFile={(field) => {
+            const setters = { viral_video: setViralVideo, source_video: setSourceVideo }
+            selectFile(setters[field])
+          }}
+          onPickDirectory={() => selectDirectory(setOutputDir)}
+          onRun={runWorkflow}
+          workflowSteps={workflowSteps}
+        />
+      )}
 
-        <nav className="drawer-nav" aria-label="主导航">
-          <button
-            className={activeView === 'task' ? 'nav-item active' : 'nav-item'}
-            onClick={() => setActiveView('task')}
-          >
-            任务
-          </button>
-          <button
-            className={activeView === 'settings' ? 'nav-item active' : 'nav-item'}
-            onClick={() => setActiveView('settings')}
-          >
-            设置
-          </button>
-        </nav>
+      {activeView === 'batch' && (
+        <BatchView
+          batchForm={{
+            root_dir: batchRootDir,
+            output_dir: batchOutputDir,
+            natasha_count: voiceSplitCount,
+          }}
+          setBatchForm={(nextForm) => {
+            setBatchRootDir(nextForm.root_dir)
+            setBatchOutputDir(nextForm.output_dir)
+            setVoiceSplitCount(nextForm.natasha_count)
+          }}
+          settings={activeSettings}
+          setSettings={syncSettingsState}
+          rewriteStyles={rewriteStyles}
+          running={running}
+          progress={progress}
+          error={error}
+          lastResult={lastResult}
+          batchCases={batchCases}
+          setBatchCases={setBatchCases}
+          onRewriteStyleChange={updateCurrentRewriteStyle}
+          onStyleSelect={selectRewriteStyle}
+          onPickDirectory={(field) => {
+            const setters = { batch_root_dir: setBatchRootDir, batch_output_dir: setBatchOutputDir }
+            selectDirectory(setters[field])
+          }}
+          onScanBatch={scanBatch}
+          onRunBatch={runBatchWorkflow}
+          workflowSteps={workflowSteps}
+        />
+      )}
 
-        <div className="drawer-status">
-          <span className={running ? 'status-dot running' : 'status-dot'} />
-          <span>{running ? progress || '执行中' : progress || '空闲'}</span>
-        </div>
-      </aside>
+      {activeView === 'styles' && (
+        <StyleLibraryView
+          settings={activeSettings}
+          setSettings={syncSettingsState}
+          rewriteStyles={rewriteStyles}
+          defaultStyleId={DEFAULT_STYLE_ID}
+          createStyleId={() => createRewriteStyleId(rewriteStyles)}
+          onSave={saveSettings}
+        />
+      )}
 
-      <main className="main-panel">
-        {activeView === 'task' ? (
-          <TaskView
-            viralVideo={viralVideo}
-            sourceVideo={sourceVideo}
-            outputDir={outputDir}
-            rewriteStyle={rewriteStyle}
-            running={running}
-            progress={progress}
-            error={error}
-            onSelectViral={() => selectFile(setViralVideo)}
-            onSelectSource={() => selectFile(setSourceVideo)}
-            onViralChange={setViralVideo}
-            onSourceChange={setSourceVideo}
-            onOutputDirChange={setOutputDir}
-            onRewriteStyleChange={setRewriteStyle}
-            onRun={runWorkflow}
-          />
-        ) : (
-          <SettingsView
-            settings={settings}
-            status={settingsStatus}
-            error={error}
-            onTopLevelChange={updateTopLevelSetting}
-            onNestedChange={updateNestedSetting}
-            onSave={saveSettings}
-          />
-        )}
-      </main>
-    </div>
+      {activeView === 'settings' && (
+        <SettingsView
+          settings={activeSettings}
+          status={settingsStatus}
+          error={error}
+          onTopLevelChange={updateTopLevelSetting}
+          onNestedChange={updateNestedSetting}
+          onSave={saveSettings}
+        />
+      )}
+
+      {activeView === 'logs' && (
+        <LogsView logs={logs} progress={progress} error={error} lastResult={lastResult} />
+      )}
+    </AppShell>
   )
 }
 
-function TaskView({
-  viralVideo,
-  sourceVideo,
-  outputDir,
-  rewriteStyle,
-  running,
-  progress,
-  error,
-  onSelectViral,
-  onSelectSource,
-  onViralChange,
-  onSourceChange,
-  onOutputDirChange,
-  onRewriteStyleChange,
-  onRun,
-}) {
-  const activeStepIndex = Math.max(0, steps.indexOf(progress))
-
-  return (
-    <section className="view">
-      <header className="view-header">
-        <div>
-          <h1>复刻任务</h1>
-          <p>选择输入视频、输出位置和文案风格。</p>
-        </div>
-        <button className="primary-button" onClick={onRun} disabled={running || !viralVideo || !sourceVideo}>
-          {running ? '执行中' : '开始执行'}
-        </button>
-      </header>
-
-      <div className="form-grid">
-        <FileField label="爆款视频" value={viralVideo} onChange={onViralChange} onSelect={onSelectViral} />
-        <FileField label="源电影" value={sourceVideo} onChange={onSourceChange} onSelect={onSelectSource} />
-
-        <label className="field">
-          <span>输出目录</span>
-          <input value={outputDir} onChange={(e) => onOutputDirChange(e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span>改写风格</span>
-          <textarea value={rewriteStyle} onChange={(e) => onRewriteStyleChange(e.target.value)} placeholder="可选" />
-        </label>
-      </div>
-
-      <section className="progress-panel">
-        <div className="section-title">执行进度</div>
-        <div className="steps">
-          {steps.map((step, index) => (
-            <div
-              className={
-                progress === '完成' || (running && index <= activeStepIndex)
-                  ? 'step active'
-                  : 'step'
-              }
-              key={step}
-            >
-              {step}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {error && <div className="alert error">{error}</div>}
-      {progress && !error && <div className="alert neutral">{progress}</div>}
-    </section>
-  )
-}
-
-function FileField({ label, value, onChange, onSelect }) {
-  const inputId = useId()
-
-  return (
-    <div className="field">
-      <label htmlFor={inputId}>{label}</label>
-      <div className="file-row">
-        <input id={inputId} value={value} onChange={(e) => onChange(e.target.value)} />
-        <button className="secondary-button" type="button" onClick={onSelect}>
-          选择
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function SettingsView({ settings, status, error, onTopLevelChange, onNestedChange, onSave }) {
-  return (
-    <section className="view">
-      <header className="view-header">
-        <div>
-          <h1>设置</h1>
-          <p>配置转录、改写和语音生成服务。</p>
-        </div>
-        <button className="primary-button" onClick={onSave}>
-          保存设置
-        </button>
-      </header>
-
-      <div className="settings-sections">
-        <section className="settings-section">
-          <h2>Whisper</h2>
-          <label className="field">
-            <span>模型路径</span>
-            <input
-              value={settings.whisper_model || ''}
-              onChange={(e) => onTopLevelChange('whisper_model', e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>VAD 模型路径</span>
-            <input
-              value={settings.vad_model || ''}
-              onChange={(e) => onTopLevelChange('vad_model', e.target.value)}
-            />
-          </label>
-          <div className="form-grid compact">
-            <label className="field">
-              <span>VAD 阈值</span>
-              <input
-                type="number"
-                step="0.01"
-                value={settings.vad?.threshold ?? 0.25}
-                onChange={(e) => onNestedChange('vad', 'threshold', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>最短语音 ms</span>
-              <input
-                type="number"
-                value={settings.vad?.min_speech_ms ?? 10}
-                onChange={(e) => onNestedChange('vad', 'min_speech_ms', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>最短静音 ms</span>
-              <input
-                type="number"
-                value={settings.vad?.min_silence_ms ?? 50}
-                onChange={(e) => onNestedChange('vad', 'min_silence_ms', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Demucs 模型</span>
-              <input
-                value={settings.demucs_model || 'htdemucs'}
-                onChange={(e) => onTopLevelChange('demucs_model', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>主讲人阈值</span>
-              <input
-                type="number"
-                step="0.01"
-                value={settings.speaker?.similarity_threshold ?? 0.82}
-                onChange={(e) => onNestedChange('speaker', 'similarity_threshold', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>ASR 语言</span>
-              <input
-                value={settings.asr?.language || 'en'}
-                onChange={(e) => onNestedChange('asr', 'language', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>行级主讲人阈值</span>
-              <input
-                type="number"
-                step="0.01"
-                value={settings.asr?.speaker_threshold ?? 0.3}
-                onChange={(e) => onNestedChange('asr', 'speaker_threshold', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>ASR 最大字符</span>
-              <input
-                type="number"
-                value={settings.asr?.max_len ?? 50}
-                onChange={(e) => onNestedChange('asr', 'max_len', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>时间偏移 ms</span>
-              <input
-                type="number"
-                value={settings.asr?.timing_offset_ms ?? 820}
-                onChange={(e) => onNestedChange('asr', 'timing_offset_ms', Number(e.target.value))}
-              />
-            </label>
-            <label className="field wide">
-              <span>Pyannote 模型</span>
-              <input
-                value={settings.speaker?.pyannote_model || ''}
-                onChange={(e) => onNestedChange('speaker', 'pyannote_model', e.target.value)}
-              />
-            </label>
-            <label className="field wide">
-              <span>HF Token</span>
-              <input
-                type="password"
-                value={settings.speaker?.hf_token || ''}
-                onChange={(e) => onNestedChange('speaker', 'hf_token', e.target.value)}
-              />
-            </label>
-            <label className="field wide">
-              <span>ASR Prompt</span>
-              <input
-                value={settings.asr?.prompt || ''}
-                onChange={(e) => onNestedChange('asr', 'prompt', e.target.value)}
-              />
-            </label>
-          </div>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={Boolean(settings.speaker?.enabled)}
-              onChange={(e) => onNestedChange('speaker', 'enabled', e.target.checked)}
-            />
-            <span>主讲人筛选</span>
-          </label>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={Boolean(settings.asr?.split_on_word)}
-              onChange={(e) => onNestedChange('asr', 'split_on_word', e.target.checked)}
-            />
-            <span>ASR 按词切分</span>
-          </label>
-          <label className="field wide">
-            <span>默认改写风格</span>
-            <textarea
-              value={settings.rewrite_style || ''}
-              onChange={(e) => onTopLevelChange('rewrite_style', e.target.value)}
-            />
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <h2>LLM</h2>
-          <div className="form-grid compact">
-            <label className="field">
-              <span>API Key</span>
-              <input
-                type="password"
-                value={settings.llm?.api_key || ''}
-                onChange={(e) => onNestedChange('llm', 'api_key', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>模型</span>
-              <input
-                value={settings.llm?.model || ''}
-                onChange={(e) => onNestedChange('llm', 'model', e.target.value)}
-              />
-            </label>
-            <label className="field wide">
-              <span>Base URL</span>
-              <input
-                value={settings.llm?.base_url || ''}
-                onChange={(e) => onNestedChange('llm', 'base_url', e.target.value)}
-              />
-            </label>
-          </div>
-        </section>
-
-        <section className="settings-section">
-          <h2>TTS</h2>
-          <div className="form-grid compact">
-            <label className="field">
-              <span>服务</span>
-              <select
-                value={settings.tts_provider || 'minimax'}
-                onChange={(e) => onTopLevelChange('tts_provider', e.target.value)}
-              >
-                <option value="minimax">Minimax</option>
-                <option value="voxcpm">VoxCPM</option>
-              </select>
-            </label>
-            <label className="field wide">
-              <span>VoxCPM Base URL</span>
-              <input
-                value={settings.voxcpm?.base_url || ''}
-                onChange={(e) => onNestedChange('voxcpm', 'base_url', e.target.value)}
-                placeholder="http://127.0.0.1:8808"
-              />
-            </label>
-            <label className="field">
-              <span>VoxCPM API</span>
-              <select
-                value={settings.voxcpm?.api_type || 'synthesize'}
-                onChange={(e) => onNestedChange('voxcpm', 'api_type', e.target.value)}
-              >
-                <option value="synthesize">/synthesize</option>
-                <option value="gradio">Gradio</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>VoxCPM 声音</span>
-              <select
-                value={settings.voxcpm?.voice || 'Natasha'}
-                onChange={(e) => onNestedChange('voxcpm', 'voice', e.target.value)}
-              >
-                <option value="Natasha">Natasha 女声</option>
-                <option value="Alex">Alex 男声</option>
-              </select>
-            </label>
-            <label className="field wide">
-              <span>Natasha 参考音频</span>
-              <input
-                value={settings.voxcpm?.voice_refs?.Natasha || ''}
-                onChange={(e) => onNestedChange('voxcpm', 'voice_refs', {
-                  ...(settings.voxcpm?.voice_refs || {}),
-                  Natasha: e.target.value,
-                })}
-                placeholder="/Users/.../Natasha.mp3"
-              />
-            </label>
-            <label className="field wide">
-              <span>Alex 参考音频</span>
-              <input
-                value={settings.voxcpm?.voice_refs?.Alex || ''}
-                onChange={(e) => onNestedChange('voxcpm', 'voice_refs', {
-                  ...(settings.voxcpm?.voice_refs || {}),
-                  Alex: e.target.value,
-                })}
-                placeholder="/Users/.../Alex.mp3"
-              />
-            </label>
-            <label className="field">
-              <span>Seed</span>
-              <input
-                type="number"
-                value={settings.voxcpm?.seed ?? 42}
-                onChange={(e) => onNestedChange('voxcpm', 'seed', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>CFG</span>
-              <input
-                type="number"
-                step="0.1"
-                value={settings.voxcpm?.cfg_value ?? 2.0}
-                onChange={(e) => onNestedChange('voxcpm', 'cfg_value', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Steps</span>
-              <input
-                type="number"
-                value={settings.voxcpm?.inference_timesteps ?? 10}
-                onChange={(e) => onNestedChange('voxcpm', 'inference_timesteps', Number(e.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Timeout 秒</span>
-              <input
-                type="number"
-                value={settings.voxcpm?.timeout ?? 900}
-                onChange={(e) => onNestedChange('voxcpm', 'timeout', Number(e.target.value))}
-              />
-            </label>
-            <label className="field wide">
-              <span>VoxCPM 控制词</span>
-              <input
-                value={settings.voxcpm?.control || ''}
-                onChange={(e) => onNestedChange('voxcpm', 'control', e.target.value)}
-                placeholder="可选，例如 calm, fast-paced"
-              />
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={!!settings.voxcpm?.do_normalize}
-                onChange={(e) => onNestedChange('voxcpm', 'do_normalize', e.target.checked)}
-              />
-              <span>VoxCPM Normalize</span>
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={!!settings.voxcpm?.denoise}
-                onChange={(e) => onNestedChange('voxcpm', 'denoise', e.target.checked)}
-              />
-              <span>VoxCPM Denoise</span>
-            </label>
-          </div>
-        </section>
-
-        <section className="settings-section">
-          <h2>Minimax</h2>
-          <div className="form-grid compact">
-            <label className="field">
-              <span>API Key</span>
-              <input
-                type="password"
-                value={settings.minimax?.api_key || ''}
-                onChange={(e) => onNestedChange('minimax', 'api_key', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Group ID</span>
-              <input
-                value={settings.minimax?.group_id || ''}
-                onChange={(e) => onNestedChange('minimax', 'group_id', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Voice ID</span>
-              <input
-                value={settings.minimax?.voice_id || ''}
-                onChange={(e) => onNestedChange('minimax', 'voice_id', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Base URL</span>
-              <input
-                value={settings.minimax?.base_url || ''}
-                onChange={(e) => onNestedChange('minimax', 'base_url', e.target.value)}
-              />
-            </label>
-          </div>
-        </section>
-      </div>
-
-      {error && <div className="alert error">{error}</div>}
-      {status && !error && <div className="alert neutral">{status}</div>}
-    </section>
-  )
+function resultSummary(result) {
+  if (!result) return ''
+  if (result.jianying_draft) return result.jianying_draft
+  if (result.output_root) return result.output_root
+  return JSON.stringify(result)
 }
