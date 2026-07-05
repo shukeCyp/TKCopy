@@ -229,6 +229,16 @@ def _run_vmf_scan(
         batch_size=batch_size,
         inflight=inflight,
     )
+    cached_results = _load_cached_vmf_results(output_json, viral_path, source_path)
+    if cached_results is not None:
+        print_log(
+            "复用 VMF 粗匹配结果",
+            "Reusing VMF coarse results",
+            output_json=output_json,
+            results=len(cached_results),
+        )
+        return cached_results
+
     try:
         _prepare_vmf_runtime_env()
         vmf = _load_embedded_vmf()
@@ -244,14 +254,85 @@ def _run_vmf_scan(
         cfg.use_smooth = False
         cfg.ensure_dirs()
         store = vmf.Store(cfg.data_dir)
-        extractor = vmf.ensure_extractor(cfg)
-        vmf.index_paths([viral_path, source_path], cfg, store, extractor)
+        if _store_has_complete_vmf_index(store, viral_path, source_path):
+            print_log(
+                "复用 VMF 粗匹配索引",
+                "Reusing VMF coarse index",
+                data_dir=data_dir,
+                vectors=_store_vector_count(store),
+            )
+        else:
+            print_log("加载 VMF 特征模型", "Loading VMF feature extractor", model=model, device=device)
+            extractor = vmf.ensure_extractor(cfg)
+            print_log("构建 VMF 粗匹配索引", "Building VMF coarse index", videos=2, data_dir=data_dir)
+            vmf.index_paths([viral_path, source_path], cfg, store, extractor)
+        print_log("搜索 VMF 粗匹配片段", "Searching VMF coarse pairs", vectors=_store_vector_count(store))
         results = vmf.find_pairs(cfg, store)
+        print_log("写入 VMF 粗匹配结果", "Writing VMF coarse results", results=len(results), output_json=output_json)
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(vmf.to_json(results), encoding="utf-8")
     except Exception as exc:
         raise RuntimeError(f"VMF 粗匹配失败 / VMF coarse match failed: {exc}") from exc
     return json.loads(output_json.read_text(encoding="utf-8"))
+
+
+def _load_cached_vmf_results(output_json: Path, viral_path: Path, source_path: Path) -> list[dict[str, Any]] | None:
+    if not output_json.is_file():
+        return None
+    try:
+        results = json.loads(output_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(results, list):
+        return None
+    if not _vmf_results_match_inputs(results, viral_path, source_path):
+        return None
+    return results
+
+
+def _vmf_results_match_inputs(results: list[Any], viral_path: Path, source_path: Path) -> bool:
+    expected_paths = {_normalize_result_path(viral_path), _normalize_result_path(source_path)}
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        a_path = _normalize_result_path(result.get("a", {}).get("path"))
+        b_path = _normalize_result_path(result.get("b", {}).get("path"))
+        if a_path is not None and b_path is not None and {a_path, b_path} == expected_paths:
+            return True
+    return False
+
+
+def _normalize_result_path(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        text = os.fspath(value)
+    except TypeError:
+        text = str(value)
+    if not text:
+        return None
+    return str(Path(text).expanduser().resolve())
+
+
+def _store_has_complete_vmf_index(store: Any, viral_path: Path, source_path: Path) -> bool:
+    has_video_by_path = getattr(store, "has_video_by_path", None)
+    n_vectors = getattr(store, "n_vectors", None)
+    if not callable(has_video_by_path) or not callable(n_vectors):
+        return False
+    try:
+        return n_vectors() > 0 and has_video_by_path(viral_path) and has_video_by_path(source_path)
+    except Exception:
+        return False
+
+
+def _store_vector_count(store: Any) -> int | None:
+    n_vectors = getattr(store, "n_vectors", None)
+    if not callable(n_vectors):
+        return None
+    try:
+        return int(n_vectors())
+    except Exception:
+        return None
 
 
 def _find_matches_in_windows(

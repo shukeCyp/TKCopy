@@ -173,3 +173,20 @@ class MainWindowTests(TestCase):
 
         self.assertEqual(result, {"path": "/tmp/output"})
         windows.__getitem__.return_value.create_file_dialog.assert_called_once_with(app_main.webview.FOLDER_DIALOG)
+
+    def test_api_workflow_thread_is_non_daemon_and_retained(self):
+        api = app_main.Api()
+        params = {
+            "viral_video": "viral.mp4",
+            "source_video": "source.mkv",
+            "output_dir": "output",
+        }
+
+        with patch.object(app_main.threading, "Thread") as thread_class:
+            thread = thread_class.return_value
+            result = api.run_workflow(params)
+
+        self.assertEqual(result, {"ok": True, "message": "workflow started"})
+        self.assertFalse(thread_class.call_args.kwargs["daemon"])
+        self.assertEqual(api._workflow_threads, [thread])
+        thread.start.assert_called_once()

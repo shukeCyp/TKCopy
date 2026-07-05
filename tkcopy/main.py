@@ -181,6 +181,7 @@ class Api:
     def __init__(self):
         print_log("初始化 API", "Initializing API")
         self.settings = merge_settings(DEFAULT_SETTINGS, {})
+        self._workflow_threads = []
         self._load_settings()
 
     def _load_settings(self):
@@ -232,7 +233,9 @@ class Api:
                 print_log("工作流失败", "Workflow failed", error=str(e))
                 emit_frontend_event("error", str(e))
 
-        threading.Thread(target=_run, daemon=True).start()
+        thread = threading.Thread(target=_run, daemon=False)
+        self._workflow_threads.append(thread)
+        thread.start()
         print_log("工作流已后台启动", "Workflow started in background")
         return {"ok": True, "message": "workflow started"}
 

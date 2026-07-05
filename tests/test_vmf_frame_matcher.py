@@ -136,6 +136,118 @@ class VMFFrameMatcherTests(unittest.TestCase):
         self.assertTrue(cfg.ensure_dirs_called)
         self.assertEqual(calls["json_results"], ["pair-result"])
 
+    def test_run_vmf_scan_reuses_existing_results_for_same_video_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            viral = root / "viral.mp4"
+            source = root / "source.mp4"
+            viral.write_bytes(b"viral")
+            source.write_bytes(b"source")
+            coarse_dir = root / "coarse"
+            output_json = coarse_dir / "vmf_results.json"
+            output_json.parent.mkdir(parents=True)
+            cached_results = [
+                {
+                    "a": {"path": str(viral.resolve())},
+                    "b": {"path": str(source.resolve())},
+                    "segments": [{"a_range": [1.0, 2.0], "b_range": [3.0, 4.0]}],
+                }
+            ]
+            output_json.write_text(json.dumps(cached_results), encoding="utf-8")
+
+            with patch("tkcopy.utils.vmf_frame_matcher._load_embedded_vmf") as load_vmf:
+                results = _run_vmf_scan(
+                    viral,
+                    source,
+                    coarse_dir,
+                    output_json,
+                    vmf_fps=3.0,
+                    model="dinov2_vits14",
+                    device="cpu",
+                    batch_size=64,
+                    inflight=1,
+                )
+
+        self.assertEqual(results, cached_results)
+        load_vmf.assert_not_called()
+
+    def test_run_vmf_scan_reuses_complete_index_without_loading_extractor(self):
+        calls = {}
+
+        class FakeConfig:
+            def __init__(self):
+                self.data_dir = None
+                self.fps = None
+                self.model = None
+                self.device = None
+                self.batch_size = None
+                self.encode_inflight = None
+                self.mirror = True
+                self.cropdetect = True
+                self.use_smooth = True
+
+            def ensure_dirs(self):
+                pass
+
+        class FakeStore:
+            def __init__(self, data_dir):
+                self.data_dir = data_dir
+
+            def has_video_by_path(self, path):
+                calls.setdefault("has_video_by_path", []).append(path)
+                return True
+
+            def n_vectors(self):
+                return 10
+
+        def fake_ensure_extractor(_cfg):
+            raise AssertionError("existing VMF index should not reload DINOv2")
+
+        def fake_index_paths(_paths, _cfg, _store, _extractor):
+            raise AssertionError("existing VMF index should not be rebuilt")
+
+        def fake_find_pairs(_cfg, _store):
+            calls["find_pairs"] = True
+            return ["pair-result"]
+
+        def fake_to_json(_results):
+            return json.dumps([{"segments": [{"a_range": [1.0, 2.0], "b_range": [3.0, 4.0]}]}])
+
+        fake_vmf = SimpleNamespace(
+            Config=FakeConfig,
+            Store=FakeStore,
+            ensure_extractor=fake_ensure_extractor,
+            index_paths=fake_index_paths,
+            find_pairs=fake_find_pairs,
+            to_json=fake_to_json,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            viral = root / "viral.mp4"
+            source = root / "source.mp4"
+            viral.write_bytes(b"viral")
+            source.write_bytes(b"source")
+            coarse_dir = root / "coarse"
+            output_json = coarse_dir / "vmf_results.json"
+
+            with patch("tkcopy.utils.vmf_frame_matcher._load_embedded_vmf", return_value=fake_vmf):
+                results = _run_vmf_scan(
+                    viral,
+                    source,
+                    coarse_dir,
+                    output_json,
+                    vmf_fps=3.0,
+                    model="dinov2_vits14",
+                    device="cpu",
+                    batch_size=64,
+                    inflight=1,
+                )
+
+        self.assertEqual(results, [{"segments": [{"a_range": [1.0, 2.0], "b_range": [3.0, 4.0]}]}])
+        self.assertEqual(calls["has_video_by_path"], [viral, source])
+        self.assertTrue(calls["find_pairs"])
+
 
 if __name__ == "__main__":
     unittest.main()
