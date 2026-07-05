@@ -251,7 +251,6 @@ class WorkflowTests(unittest.TestCase):
         settings = {
             "frame_match": {
                 "engine": "vmf",
-                "vmf_bin": "/opt/vmf",
                 "fps": 3,
                 "model": "dinov2_vits14",
                 "device": "cpu",
@@ -333,7 +332,6 @@ class WorkflowTests(unittest.TestCase):
             "viral.mp4",
             "source.mkv",
             output_dir / "match",
-            vmf_bin="/opt/vmf",
             vmf_fps=3.0,
             model="dinov2_vits14",
             device="cpu",

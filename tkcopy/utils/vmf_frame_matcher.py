@@ -5,11 +5,10 @@ import csv
 import hashlib
 import json
 import os
-import shutil
-import subprocess
 import time
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -36,7 +35,6 @@ from tkcopy.utils.frame_matcher import (
 )
 
 
-DEFAULT_VMF_BIN = "/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf"
 DEFAULT_VMF_MODEL = "dinov2_vits14"
 DEFAULT_VMF_FPS = 3.0
 DEFAULT_SOURCE_PADDING_SECONDS = 90.0
@@ -91,7 +89,6 @@ def run_vmf_frame_match(
     source_video: str | Path,
     output_dir: str | Path,
     *,
-    vmf_bin: str = DEFAULT_VMF_BIN,
     vmf_fps: float = DEFAULT_VMF_FPS,
     model: str = DEFAULT_VMF_MODEL,
     device: str = "cpu",
@@ -132,7 +129,6 @@ def run_vmf_frame_match(
         source_path,
         coarse_dir,
         raw_results_path,
-        vmf_bin=vmf_bin,
         vmf_fps=vmf_fps,
         model=model,
         device=device,
@@ -213,45 +209,48 @@ def _run_vmf_scan(
     coarse_dir: Path,
     output_json: Path,
     *,
-    vmf_bin: str,
     vmf_fps: float,
     model: str,
     device: str,
     batch_size: int,
     inflight: int,
 ) -> list[dict[str, Any]]:
-    resolved_bin = _resolve_vmf_bin(vmf_bin)
     data_dir = coarse_dir / "index"
-    cmd = [
-        resolved_bin,
-        "scan",
-        str(viral_path),
-        str(source_path),
-        "--data-dir",
-        str(data_dir),
-        "--json",
-        str(output_json),
-        "--fps",
-        str(vmf_fps),
-        "--model",
-        model,
-        "--device",
-        device,
-        "--no-cropdetect",
-        "--no-mirror",
-        "--batch-size",
-        str(batch_size),
-        "--inflight",
-        str(inflight),
-        "--legacy-ransac",
-    ]
-    print_log("执行 VMF 3fps 粗匹配", "Running VMF coarse match", cmd=" ".join(cmd))
+    print_log(
+        "执行内置 VMF 3fps 粗匹配",
+        "Running embedded VMF coarse match",
+        viral_video=viral_path,
+        source_video=source_path,
+        data_dir=data_dir,
+        output_json=output_json,
+        fps=vmf_fps,
+        model=model,
+        device=device,
+        batch_size=batch_size,
+        inflight=inflight,
+    )
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_vmf_env())
-    except subprocess.CalledProcessError as exc:
-        stdout = (exc.stdout or b"").decode("utf-8", errors="replace").strip()
-        stderr = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"VMF 粗匹配失败 / VMF coarse match failed: {stderr or stdout}") from exc
+        _prepare_vmf_runtime_env()
+        vmf = _load_embedded_vmf()
+        cfg = vmf.Config()
+        cfg.data_dir = data_dir
+        cfg.fps = vmf_fps
+        cfg.model = model
+        cfg.device = device
+        cfg.batch_size = batch_size
+        cfg.encode_inflight = inflight
+        cfg.cropdetect = False
+        cfg.mirror = False
+        cfg.use_smooth = False
+        cfg.ensure_dirs()
+        store = vmf.Store(cfg.data_dir)
+        extractor = vmf.ensure_extractor(cfg)
+        vmf.index_paths([viral_path, source_path], cfg, store, extractor)
+        results = vmf.find_pairs(cfg, store)
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(vmf.to_json(results), encoding="utf-8")
+    except Exception as exc:
+        raise RuntimeError(f"VMF 粗匹配失败 / VMF coarse match failed: {exc}") from exc
     return json.loads(output_json.read_text(encoding="utf-8"))
 
 
@@ -323,26 +322,31 @@ def _window_chunks(windows: list[tuple[float, float]]) -> list[tuple[float, floa
     return chunks
 
 
-def _resolve_vmf_bin(vmf_bin: str) -> str:
-    configured = os.environ.get("TKCOPY_VMF_BIN") or vmf_bin
-    resolved = shutil.which(configured)
-    if resolved:
-        return resolved
-    candidate = Path(configured).expanduser()
-    if candidate.is_file() and os.access(candidate, os.X_OK):
-        return str(candidate.resolve())
-    raise RuntimeError(f"找不到 VMF 命令 / VMF command not found: {configured}")
+def _prepare_vmf_runtime_env() -> None:
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-def _vmf_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-    env["OMP_NUM_THREADS"] = "1"
-    env["MKL_NUM_THREADS"] = "1"
-    env["VECLIB_MAXIMUM_THREADS"] = "1"
-    env["OPENBLAS_NUM_THREADS"] = "1"
-    env["NUMEXPR_NUM_THREADS"] = "1"
-    return env
+def _load_embedded_vmf() -> SimpleNamespace:
+    try:
+        from vmf.config import Config
+        from vmf.index import Store
+        from vmf.pipeline import ensure_extractor, find_pairs, index_paths
+        from vmf.ui import to_json
+    except Exception as exc:
+        raise RuntimeError("内置 VMF 依赖不可用 / embedded VMF dependency is unavailable") from exc
+    return SimpleNamespace(
+        Config=Config,
+        Store=Store,
+        ensure_extractor=ensure_extractor,
+        index_paths=index_paths,
+        find_pairs=find_pairs,
+        to_json=to_json,
+    )
 
 
 def _windows_cache_key(source_path: Path, windows: list[tuple[float, float]]) -> str:

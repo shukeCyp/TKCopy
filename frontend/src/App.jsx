@@ -57,7 +57,6 @@ const DEFAULT_SETTINGS = {
   demucs_model: 'htdemucs',
   frame_match: {
     engine: 'vmf',
-    vmf_bin: '/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf',
     fps: 3.0,
     model: 'dinov2_vits14',
     device: 'cpu',

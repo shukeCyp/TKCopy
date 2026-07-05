@@ -118,12 +118,6 @@ export function SettingsView({ settings, status, error, onTopLevelChange, onNest
                   ]}
                 />
               </Field>
-              <Field label="VMF 路径" wide>
-                <TextInput
-                  value={settings.frame_match?.vmf_bin || ''}
-                  onChange={(value) => onNestedChange('frame_match', 'vmf_bin', value)}
-                />
-              </Field>
               <NumberInput
                 label="粗匹配 FPS"
                 step="0.5"

@@ -12,6 +12,7 @@ dependencies = [
     "pywebview>=5.0",
     "scipy>=1.15",
     "pyjianyingdraft>=0.2.7",
+    "video-match-finder[torch-cpu]",
 ]
 
 [build-system]
@@ -20,3 +21,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tkcopy"]
+
+[tool.uv.sources]
+video-match-finder = { git = "https://github.com/Sinoosoida/video-match-finder.git", rev = "db7cc691667250203b2941651e78e34c60eb97e1" }

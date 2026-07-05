@@ -57,13 +57,8 @@ tkcopy/main.py
 - `ffprobe`
 - `whisper-cli`
 - `whisper-vad-speech-segments`
-- `vmf`
 
-VMF 默认路径：
-
-```text
-/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf
-```
+VMF 通过 `video-match-finder` Python 依赖内置调用，由 `uv sync` 安装，不需要额外配置命令路径。
 
 ## 本地模型默认查找路径
 
@@ -80,4 +75,3 @@ VAD 模型查找顺序：
 1. `.models/ggml-silero-v6.2.0.bin`
 2. `model/ggml-silero-v6.2.0.bin`
 3. `~/Documents/autocopy/model/ggml-silero-v6.2.0.bin`
-

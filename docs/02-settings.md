@@ -50,7 +50,6 @@ tkcopy/main.py::DEFAULT_SETTINGS
 | key | 默认值 | 说明 |
 | --- | --- | --- |
 | `frame_match.engine` | `vmf` | `vmf` 或 `internal` |
-| `frame_match.vmf_bin` | `/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf` | VMF 命令路径 |
 | `frame_match.fps` | `3.0` | VMF 粗匹配采样帧率 |
 | `frame_match.model` | `dinov2_vits14` | VMF 模型 |
 | `frame_match.device` | `cpu` | VMF 运行设备 |
@@ -121,4 +120,3 @@ tkcopy/main.py::DEFAULT_SETTINGS
 - `rewrite_style`
 
 旧配置里的 `rewrite_style` 会迁移到默认风格卡片。
-

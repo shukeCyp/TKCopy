@@ -93,9 +93,9 @@ VMF 没有找到粗匹配窗口 / VMF found no coarse source windows
 
 优先检查：
 
-- `frame_match.vmf_bin`
 - `frame_match.fps`
 - `frame_match.model`
+- `video-match-finder` 依赖是否已由 `uv sync` 安装
 - 爆款视频和原片是否对应同一集
 - 原片是否需要更大 `padding_seconds`
 
@@ -133,4 +133,3 @@ VMF 没有找到粗匹配窗口 / VMF found no coarse source windows
 - `Timelines/<timeline_id>/draft_content.json`
 
 如果素材显示无权限，检查 `Resources/tkcopy` 下的视频和音频文件是否存在。
-

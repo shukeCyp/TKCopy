@@ -174,7 +174,6 @@ def run_frame_matching_step(
             context.inputs.viral_video,
             context.inputs.source_video,
             context.paths.match_dir,
-            vmf_bin=frame_match_settings.get("vmf_bin", "/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf"),
             vmf_fps=float(frame_match_settings.get("fps", 3.0)),
             model=frame_match_settings.get("model", "dinov2_vits14"),
             device=frame_match_settings.get("device", "cpu"),

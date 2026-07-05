@@ -82,7 +82,6 @@ VMF 先做 3fps 粗匹配，再只在粗匹配窗口内做本地精修。
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `engine` | `vmf` | 使用 VMF |
-| `vmf_bin` | `/Users/chaiyapeng/Documents/autocopy/.venv/bin/vmf` | VMF 命令 |
 | `fps` | `3.0` | 粗匹配采样帧率 |
 | `model` | `dinov2_vits14` | VMF 模型 |
 | `device` | `cpu` | 设备 |
@@ -90,20 +89,19 @@ VMF 先做 3fps 粗匹配，再只在粗匹配窗口内做本地精修。
 | `inflight` | `1` | in-flight 队列 |
 | `padding_seconds` | `90.0` | 粗匹配窗口扩展 |
 
-VMF 实际命令会包含：
+VMF 通过 `video-match-finder` Python API 内置调用，等价配置为：
 
 ```text
-vmf scan <viral_video> <source_video>
-  --data-dir <output_dir>/match/vmf_coarse/index
-  --json <output_dir>/match/vmf_coarse/vmf_results.json
-  --fps 3.0
-  --model dinov2_vits14
-  --device cpu
-  --no-cropdetect
-  --no-mirror
-  --batch-size 64
-  --inflight 1
-  --legacy-ransac
+data_dir=<output_dir>/match/vmf_coarse/index
+json=<output_dir>/match/vmf_coarse/vmf_results.json
+fps=3.0
+model=dinov2_vits14
+device=cpu
+cropdetect=false
+mirror=false
+batch_size=64
+encode_inflight=1
+use_smooth=false
 ```
 
 ## 内部匹配参数
@@ -118,9 +116,8 @@ vmf scan <viral_video> <source_video>
 - `步骤参数: 镜头匹配`
 - `VMF 镜头匹配开始`
 - `读取视频帧率`
-- `执行 VMF 3fps 粗匹配`
+- `执行内置 VMF 3fps 粗匹配`
 - `VMF 粗匹配窗口`
 - `VMF 镜头匹配结束`
 - `步骤产物: 镜头匹配`
 - `步骤完成: 镜头匹配`
-
